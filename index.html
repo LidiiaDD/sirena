@@ -77,15 +77,20 @@
 <script>
 (() => {
   // ------- CONFIG (translator) -------
-  const AZURE_KEY = "";      // опційно: встав свій ключ Azure Translator
+  // Варіант 1 (стабільний): додай свій ключ і регіон Azure — і переклад піде через Azure.
+  const AZURE_KEY = "";      // <-- встав, якщо є
   const AZURE_REGION = "";   // напр. "westeurope"
   const AZURE_ENDPOINT = "https://api.cognitive.microsofttranslator.com/translate?api-version=3.0";
 
-  // дзеркала LibreTranslate (fallback)
+  // Варіант 2 (fallback): публічні дзеркала LibreTranslate + додатковий резерв MyMemory
   const LIBRE_URLS = [
     "https://libretranslate.com/translate",
-    "https://libretranslate.de/translate"
+    "https://libretranslate.de/translate",
+    "https://translate.astian.org/translate"
   ];
+  const MYMEMORY_URL = "https://api.mymemory.translated.net/get";
+
+  const shortLang = (code) => (code || "").split("-")[0].toLowerCase();
 
   // ---------- UI ----------
   const startBtn = document.getElementById("startBtn");
@@ -110,14 +115,14 @@
   asrBadge.textContent = "ASR: " + (asrSupported ? "supported" : "not available");
   asrBadge.classList.add(asrSupported ? "ok" : "bad");
 
-  trBadge.textContent = "Translate: " + (AZURE_KEY && AZURE_REGION ? "Azure" : "Libre (demo)");
+  trBadge.textContent = "Translate: " + (AZURE_KEY && AZURE_REGION ? "Azure" : "Libre + backup");
   trBadge.classList.add("ok");
 
   // ---------- Translate ----------
   async function translateText(text, to, from = "auto") {
     if (!text.trim()) return "";
 
-    // 1) Azure (стабільний шлях)
+    // 1) Azure (стабільно, якщо задані ключ та регіон)
     if (AZURE_KEY && AZURE_REGION) {
       try {
         const url = `${AZURE_ENDPOINT}&to=${encodeURIComponent(to)}`;
@@ -134,11 +139,13 @@
           const data = await r.json();
           const t = data?.[0]?.translations?.[0]?.text;
           if (t) return t;
+        } else {
+          console.warn("Azure HTTP:", r.status);
         }
       } catch (e) { console.warn("Azure error:", e); }
     }
 
-    // 2) LibreTranslate: спробувати кілька дзеркал по черзі
+    // 2) LibreTranslate: пробуємо кілька дзеркал по черзі
     for (const url of LIBRE_URLS) {
       try {
         const r = await fetch(url, {
@@ -151,11 +158,22 @@
         if (data?.translatedText) return data.translatedText;
       } catch (e) {
         console.warn("Libre error:", url, e);
-        // продовжуємо до наступного дзеркала
       }
     }
 
-    // 3) Фallback: повернути оригінал (щоб UI не ламався)
+    // 3) MyMemory: ще один безкоштовний резерв
+    try {
+      const pair = `${from === "auto" ? "auto" : from}|${to}`;
+      const url = `${MYMEMORY_URL}?q=${encodeURIComponent(text)}&langpair=${encodeURIComponent(pair)}`;
+      const r = await fetch(url);
+      if (r.ok) {
+        const data = await r.json();
+        const t = data?.responseData?.translatedText;
+        if (t) return t;
+      }
+    } catch (e) { console.warn("MyMemory error:", e); }
+
+    // 4) Якщо всі впали — повертаємо оригінал, щоб UI не ламався
     return text;
   }
 
@@ -190,8 +208,9 @@
       // «стоп» голосом
       if (["стоп","stop","зупинись"].includes(text.toLowerCase())) { stop(); return; }
 
-      // переклад
-      const translated = await translateText(text, targetSel.value);
+      // переклад (передаємо й мову диктора для кращої якості на деяких сервісах)
+      statusEl.textContent = "Перекладаю…";
+      const translated = await translateText(text, targetSel.value, shortLang(sourceSel.value));
       tran.value  += (tran.value ? "\n" : "") + translated;
       statusEl.textContent = "✅ Додано фрагмент";
     };
