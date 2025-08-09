@@ -45,7 +45,7 @@
     <button id="stopBtn" class="btn stop" disabled aria-label="Зупинити">⏹ Зупинити</button>
     <button id="clearBtn" class="btn" aria-label="Очистити">🧹 Очистити</button>
     <button id="saveBtn" class="btn" aria-label="Зберегти в Word">💾 Word</button>
-    <button id="copyBtn" class="btn" aria-label="Копіювати переклад">📋 Копіювати переклад</button>
+    <button id="copyBtn" class="btn" aria-label="Копіювати переклад">📋 Копіювати</button>
     <button id="txtBtn" class="btn" aria-label="Експорт у TXT">🗒 TXT</button>
     <span class="spacer"></span>
     <button id="themeBtn" class="btn ghost" aria-label="Перемкнути тему">🌙 Тема</button>
@@ -88,18 +88,16 @@
   </div>
 </div>
 
-<!-- docx + filesaver -->
 <script src="https://unpkg.com/docx@8.5.0/build/index.umd.js"></script>
 <script src="https://unpkg.com/file-saver@2.0.5/dist/FileSaver.min.js"></script>
 <script>
 (() => {
-  // ====== CONFIG: переклад ======
-  // ⚡ РЕКОМЕНДОВАНО: встав свій ключ і регіон Azure — переклад стане миттєвим і стабільним
-  const AZURE_KEY = "";        // ← встав ключ
-  const AZURE_REGION = "";     // ← напр. "westeurope"
+  // ===== CONFIG: Translator =====
+  const AZURE_KEY = "";          // ← встав ключ (опційно)
+  const AZURE_REGION = "";       // ← напр. "westeurope"
   const AZURE_ENDPOINT = "https://api.cognitive.microsofttranslator.com/translate?api-version=3.0";
 
-  // fallback без ключів: кілька публічних сервісів
+  // Fallbacks (без ключів)
   const LIBRE_URLS = [
     "https://libretranslate.com/translate",
     "https://libretranslate.de/translate",
@@ -109,7 +107,7 @@
 
   const shortLang = (code) => (code || "").split("-")[0].toLowerCase();
 
-  // ====== ЕЛЕМЕНТИ UI ======
+  // ===== UI refs =====
   const startBtn = document.getElementById("startBtn");
   const stopBtn  = document.getElementById("stopBtn");
   const clearBtn = document.getElementById("clearBtn");
@@ -126,11 +124,11 @@
   const asrBadge = document.getElementById("asrSupport");
   const trBadge  = document.getElementById("transSupport");
 
-  // ====== ТЕМА (збереження вибору) ======
+  // ===== Theme toggle =====
   const root = document.documentElement;
   const savedTheme = localStorage.getItem("theme");
   if (savedTheme) root.setAttribute("data-theme", savedTheme);
-  themeBtn.textContent = root.getAttribute("data-theme")==="dark" ? "🌙 Тема" : "☀️ Тема";
+  themeBtn.textContent = (root.getAttribute("data-theme")==="dark") ? "🌙 Тема" : "☀️ Тема";
   themeBtn.addEventListener("click", () => {
     const cur = root.getAttribute("data-theme") || "dark";
     const next = cur === "dark" ? "light" : "dark";
@@ -139,11 +137,11 @@
     themeBtn.textContent = next==="dark" ? "🌙 Тема" : "☀️ Тема";
   });
 
-  // дефолт — мова системи для перекладу
+  // Default target = system language (if present)
   const sys = (navigator.language || "uk").split("-")[0];
   [...targetSel.options].some(o => { if (o.value === sys) { targetSel.value = sys; return true; } });
 
-  // ====== ASR (розпізнавання в браузері) ======
+  // ===== ASR support badge =====
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   const asrSupported = !!SR;
   asrBadge.textContent = "ASR: " + (asrSupported ? "supported" : "not available");
@@ -151,11 +149,15 @@
   trBadge.textContent = "Translate: " + (AZURE_KEY && AZURE_REGION ? "Azure" : "Libre + backup");
   trBadge.classList.add("ok");
 
-  // ====== Переклад з пріоритетом Azure ======
+  // ===== Translator with early return for equal languages =====
   async function translateText(text, to, from = "auto") {
     if (!text.trim()) return "";
+    if (to && from && shortLang(to) === shortLang(from)) {
+      // однакові мови — переклад не потрібен
+      return text;
+    }
 
-    // 1) Azure
+    // 1) Azure (if configured)
     if (AZURE_KEY && AZURE_REGION) {
       try {
         const url = `${AZURE_ENDPOINT}&to=${encodeURIComponent(to)}`;
@@ -172,13 +174,11 @@
           const data = await r.json();
           const t = data?.[0]?.translations?.[0]?.text;
           if (t) return t;
-        } else {
-          console.warn("Azure HTTP:", r.status);
-        }
+        } else { console.warn("Azure HTTP:", r.status); }
       } catch (e) { console.warn("Azure error:", e); }
     }
 
-    // 2) LibreTranslate (кілька дзеркал)
+    // 2) LibreTranslate mirrors
     for (const url of LIBRE_URLS) {
       try {
         const r = await fetch(url, {
@@ -189,12 +189,10 @@
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         const data = await r.json();
         if (data?.translatedText) return data.translatedText;
-      } catch (e) {
-        console.warn("Libre error:", url, e);
-      }
+      } catch (e) { console.warn("Libre error:", url, e); }
     }
 
-    // 3) MyMemory резерв
+    // 3) MyMemory backup
     try {
       const pair = `${from === "auto" ? "auto" : from}|${to}`;
       const url = `${MYMEMORY_URL}?q=${encodeURIComponent(text)}&langpair=${encodeURIComponent(pair)}`;
@@ -206,11 +204,11 @@
       }
     } catch (e) { console.warn("MyMemory error:", e); }
 
-    // 4) fallback: повернути оригінал
+    // 4) fallback: return original text
     return text;
   }
 
-  // ====== Розпізнавання мовлення ======
+  // ===== Speech Recognition =====
   let recognition = null;
   let listening = false;
 
@@ -237,11 +235,19 @@
 
       orig.value += (orig.value ? "\n" : "") + text;
 
-      // голосова команда для зупинки
+      // voice stop
       if (["стоп","stop","зупинись"].includes(text.toLowerCase())) { stop(); return; }
 
+      const srcShort = shortLang(sourceSel.value);
+      // якщо мови однакові — просто копіюємо
+      if (srcShort === shortLang(targetSel.value)) {
+        tran.value += (tran.value ? "\n" : "") + text;
+        statusEl.textContent = "⏩ Мови однакові — скопійовано без перекладу";
+        return;
+      }
+
       statusEl.textContent = "Перекладаю…";
-      const translated = await translateText(text, targetSel.value, shortLang(sourceSel.value));
+      const translated = await translateText(text, targetSel.value, srcShort);
       tran.value  += (tran.value ? "\n" : "") + translated;
       statusEl.textContent = "✅ Додано фрагмент";
     };
@@ -260,7 +266,7 @@
     startBtn.disabled = false; stopBtn.disabled = true;
   }
 
-  // ====== Word (.docx) ======
+  // ===== Save DOCX =====
   async function saveDocx() {
     const { Document, Packer, Paragraph, HeadingLevel } = window.docx;
     const doc = new Document({
@@ -282,7 +288,7 @@
     saveAs(blob, `voice_to_text_${ts}.docx`);
   }
 
-  // ====== Копіювання перекладу + TXT ======
+  // ===== Copy & TXT =====
   async function copyTranslation() {
     const text = tran.value || "";
     if (!text.trim()) { statusEl.textContent = "Немає перекладу для копіювання"; return; }
@@ -290,7 +296,6 @@
       await navigator.clipboard.writeText(text);
       statusEl.textContent = "📋 Переклад скопійовано";
     } catch {
-      // fallback
       const ta = document.createElement("textarea");
       ta.value = text; document.body.appendChild(ta); ta.select();
       try { document.execCommand("copy"); statusEl.textContent = "📋 Переклад скопійовано"; }
@@ -298,7 +303,6 @@
       finally { document.body.removeChild(ta); }
     }
   }
-
   function exportTxt() {
     const content =
 `=== ОРИГІНАЛ ===
@@ -312,7 +316,7 @@ ${tran.value || ""}
     saveAs(blob, `voice_to_text_${ts}.txt`);
   }
 
-  // ====== Прив'язка подій ======
+  // ===== Events =====
   startBtn.addEventListener("click", start);
   stopBtn .addEventListener("click", stop);
   clearBtn.addEventListener("click", () => { orig.value=""; tran.value=""; statusEl.textContent="Очищено"; });
@@ -322,6 +326,8 @@ ${tran.value || ""}
   sourceSel.addEventListener("change", () => { if (recognition) recognition.lang = sourceSel.value; });
 
   // init
+  const trIsAzure = !!(AZURE_KEY && AZURE_REGION);
+  trBadge.textContent = "Translate: " + (trIsAzure ? "Azure" : "Libre + backup");
   setupRecognition();
 })();
 </script>
