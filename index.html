@@ -90,12 +90,14 @@
   </div>
 </div>
 
+<!-- docx + filesaver -->
 <script src="https://unpkg.com/docx@8.5.0/build/index.umd.js"></script>
 <script src="https://unpkg.com/file-saver@2.0.5/dist/FileSaver.min.js"></script>
 <script>
 (() => {
   // ===== CONFIG: Translator =====
-  const AZURE_KEY = "";          // ← встав ключ (опційно)
+  // ⚡ (Опційно) додай свій ключ і регіон Azure — переклад стане миттєвим і стабільним
+  const AZURE_KEY = "";          // ← встав ключ
   const AZURE_REGION = "";       // ← напр. "westeurope"
   const AZURE_ENDPOINT = "https://api.cognitive.microsofttranslator.com/translate?api-version=3.0";
 
@@ -108,6 +110,19 @@
   const MYMEMORY_URL = "https://api.mymemory.translated.net/get";
 
   const shortLang = (code) => (code || "").split("-")[0].toLowerCase();
+
+  // ✒️ Автопунктуація (дуже проста: капіталізація + крапка; англ. « i » → « I »)
+  function autoPunctuate(text, langCode) {
+    if (!text) return "";
+    let t = text.trim().replace(/\s+/g, " ");
+    if (!t) return "";
+    t = t.charAt(0).toUpperCase() + t.slice(1);
+    if (shortLang(langCode) === "en") {
+      t = t.replace(/(^|[\s“"(\[])(i)([\s”")\].,!?:;]|$)/g, "$1I$3");
+    }
+    if (!/[.!?…]$/.test(t)) t += ".";
+    return t;
+  }
 
   // ===== UI refs =====
   const startBtn = document.getElementById("startBtn");
@@ -155,7 +170,8 @@
   async function translateText(text, to, from = "auto") {
     if (!text.trim()) return "";
     if (to && from && shortLang(to) === shortLang(from)) {
-      return text; // однакові мови — переклад не потрібен
+      // однакові мови — переклад не потрібен
+      return text;
     }
 
     // 1) Azure (if configured)
@@ -231,23 +247,28 @@
     recognition.onresult = async (ev) => {
       const res = ev.results[ev.results.length - 1];
       if (!res || !res.isFinal) return;
-      const text = res[0].transcript.trim();
-      if (!text) return;
+      const raw = res[0].transcript.trim();
+      if (!raw) return;
 
-      orig.value += (orig.value ? "\n" : "") + text;
+      // голосова команда для зупинки (перевіряємо «сире» значення)
+      if (["стоп","stop","зупинись"].includes(raw.toLowerCase())) { stop(); return; }
 
-      if (["стоп","stop","зупинись"].includes(text.toLowerCase())) { stop(); return; }
-
+      // ✒️ автопунктуація
       const srcShort = shortLang(sourceSel.value);
+      const neat = autoPunctuate(raw, sourceSel.value);
+      orig.value += (orig.value ? "\n" : "") + neat;
+
+      // якщо мови однакові — не перекладаємо, просто дублюємо
       if (srcShort === shortLang(targetSel.value)) {
-        tran.value += (tran.value ? "\n" : "") + text;
+        tran.value += (tran.value ? "\n" : "") + neat;
         statusEl.textContent = "⏩ Мови однакові — скопійовано без перекладу";
         return;
       }
 
       statusEl.textContent = "Перекладаю…";
-      const translated = await translateText(text, targetSel.value, srcShort);
-      tran.value  += (tran.value ? "\n" : "") + translated;
+      const translated = await translateText(neat, targetSel.value, srcShort);
+      const translatedNeat = autoPunctuate(translated, targetSel.value);
+      tran.value  += (tran.value ? "\n" : "") + translatedNeat;
       statusEl.textContent = "✅ Додано фрагмент";
     };
   }
@@ -315,6 +336,29 @@ ${tran.value || ""}
     saveAs(blob, `voice_to_text_${ts}.txt`);
   }
 
+  // ===== Hotkeys =====
+  // Ctrl+Enter — Старт/Стоп,  Esc — Стоп
+  // Ctrl+S — DOCX,  Ctrl+Shift+C — Копіювати,  Ctrl+Shift+X — TXT,  Ctrl+K — Очистити
+  document.addEventListener("keydown", (e) => {
+    const k = e.key.toLowerCase();
+    const ctrl = e.ctrlKey || e.metaKey;
+    const shift = e.shiftKey;
+    if (ctrl && k === "enter") {
+      if (startBtn.disabled) { stop(); } else { start(); }
+      e.preventDefault();
+    } else if (k === "escape") {
+      stop();
+    } else if (ctrl && k === "s") {
+      saveDocx(); e.preventDefault();
+    } else if (ctrl && shift && k === "c") {
+      copyTranslation(); e.preventDefault();
+    } else if (ctrl && shift && k === "x") {
+      exportTxt(); e.preventDefault();
+    } else if (ctrl && k === "k") {
+      orig.value = ""; tran.value = ""; statusEl.textContent = "Очищено"; e.preventDefault();
+    }
+  });
+
   // ===== Events =====
   startBtn.addEventListener("click", start);
   stopBtn .addEventListener("click", stop);
@@ -332,4 +376,3 @@ ${tran.value || ""}
 </script>
 </body>
 </html>
-
