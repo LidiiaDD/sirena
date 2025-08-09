@@ -60,6 +60,7 @@
         <option value="pl-PL">pl-PL (Polski)</option>
         <option value="de-DE">de-DE (Deutsch)</option>
         <option value="fr-FR">fr-FR (Français)</option>
+        <option value="az-AZ">az-AZ (Azərbaycan)</option>
       </select>
     </label>
     <label>🔽 Мова перекладу:
@@ -70,6 +71,7 @@
         <option value="de">de</option>
         <option value="fr">fr</option>
         <option value="es">es</option>
+        <option value="az">az</option>
       </select>
     </label>
     <span class="pill" id="asrSupport">ASR: …</span>
@@ -153,8 +155,7 @@
   async function translateText(text, to, from = "auto") {
     if (!text.trim()) return "";
     if (to && from && shortLang(to) === shortLang(from)) {
-      // однакові мови — переклад не потрібен
-      return text;
+      return text; // однакові мови — переклад не потрібен
     }
 
     // 1) Azure (if configured)
@@ -235,11 +236,9 @@
 
       orig.value += (orig.value ? "\n" : "") + text;
 
-      // voice stop
       if (["стоп","stop","зупинись"].includes(text.toLowerCase())) { stop(); return; }
 
       const srcShort = shortLang(sourceSel.value);
-      // якщо мови однакові — просто копіюємо
       if (srcShort === shortLang(targetSel.value)) {
         tran.value += (tran.value ? "\n" : "") + text;
         statusEl.textContent = "⏩ Мови однакові — скопійовано без перекладу";
@@ -333,3 +332,4 @@ ${tran.value || ""}
 </script>
 </body>
 </html>
+
