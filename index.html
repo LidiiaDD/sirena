@@ -18,7 +18,7 @@
   textarea{width:100%;min-height:200px;background:transparent;border:0;color:#e5e7eb;resize:vertical;font-size:15px;line-height:1.5}
   h1{font-size:22px;margin:0 0 14px 0} h2{font-size:16px;margin:10px 0}
   .status{margin-top:6px;font-size:13px;color:var(--muted)}
-  .pill{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border-radius:20px;background:#0b1224;border:1px solid #223; font-size:12px}
+  .pill{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border-radius:20px;background:#0b1224;border:1px solid #223;font-size:12px}
   .ok{color:var(--accent)} .bad{color:var(--danger)}
 </style>
 </head>
@@ -71,16 +71,23 @@
   </div>
 </div>
 
+<!-- docx + filesaver -->
 <script src="https://unpkg.com/docx@8.5.0/build/index.umd.js"></script>
 <script src="https://unpkg.com/file-saver@2.0.5/dist/FileSaver.min.js"></script>
 <script>
 (() => {
   // ------- CONFIG (translator) -------
-  const AZURE_KEY = "";      // optional: your Azure Translator key
-  const AZURE_REGION = "";   // e.g. "westeurope"
+  const AZURE_KEY = "";      // опційно: встав свій ключ Azure Translator
+  const AZURE_REGION = "";   // напр. "westeurope"
   const AZURE_ENDPOINT = "https://api.cognitive.microsofttranslator.com/translate?api-version=3.0";
-  const LIBRE_URL = "https://libretranslate.com/translate";
 
+  // дзеркала LibreTranslate (fallback)
+  const LIBRE_URLS = [
+    "https://libretranslate.com/translate",
+    "https://libretranslate.de/translate"
+  ];
+
+  // ---------- UI ----------
   const startBtn = document.getElementById("startBtn");
   const stopBtn  = document.getElementById("stopBtn");
   const clearBtn = document.getElementById("clearBtn");
@@ -93,20 +100,26 @@
   const asrBadge = document.getElementById("asrSupport");
   const trBadge  = document.getElementById("transSupport");
 
+  // дефолт — мова системи
   const sys = (navigator.language || "uk").split("-")[0];
   [...targetSel.options].some(o => { if (o.value === sys) { targetSel.value = sys; return true; } });
 
+  // ---------- ASR support badge ----------
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   const asrSupported = !!SR;
   asrBadge.textContent = "ASR: " + (asrSupported ? "supported" : "not available");
   asrBadge.classList.add(asrSupported ? "ok" : "bad");
-  trBadge.textContent = "Translate: " + (AZURE_KEY ? "Azure" : "Libre (demo)");
+
+  trBadge.textContent = "Translate: " + (AZURE_KEY && AZURE_REGION ? "Azure" : "Libre (demo)");
   trBadge.classList.add("ok");
 
-  async function translateText(text, to) {
+  // ---------- Translate ----------
+  async function translateText(text, to, from = "auto") {
     if (!text.trim()) return "";
-    try {
-      if (AZURE_KEY) {
+
+    // 1) Azure (стабільний шлях)
+    if (AZURE_KEY && AZURE_REGION) {
+      try {
         const url = `${AZURE_ENDPOINT}&to=${encodeURIComponent(to)}`;
         const r = await fetch(url, {
           method: "POST",
@@ -117,23 +130,36 @@
           },
           body: JSON.stringify([{ Text: text }])
         });
-        const data = await r.json();
-        return data?.[0]?.translations?.[0]?.text ?? text;
-      } else {
-        const r = await fetch(LIBRE_URL, {
+        if (r.ok) {
+          const data = await r.json();
+          const t = data?.[0]?.translations?.[0]?.text;
+          if (t) return t;
+        }
+      } catch (e) { console.warn("Azure error:", e); }
+    }
+
+    // 2) LibreTranslate: спробувати кілька дзеркал по черзі
+    for (const url of LIBRE_URLS) {
+      try {
+        const r = await fetch(url, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ q: text, source: "auto", target: to, format: "text" })
+          body: JSON.stringify({ q: text, source: from, target: to, format: "text" })
         });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
         const data = await r.json();
-        return data?.translatedText ?? text;
+        if (data?.translatedText) return data.translatedText;
+      } catch (e) {
+        console.warn("Libre error:", url, e);
+        // продовжуємо до наступного дзеркала
       }
-    } catch (e) {
-      console.warn("Translate error:", e);
-      return text;
     }
+
+    // 3) Фallback: повернути оригінал (щоб UI не ламався)
+    return text;
   }
 
+  // ---------- Speech Recognition ----------
   let recognition = null;
   let listening = false;
 
@@ -157,10 +183,16 @@
       if (!res || !res.isFinal) return;
       const text = res[0].transcript.trim();
       if (!text) return;
-      orig.value += (orig.value ? "\\n" : "") + text;
+
+      // додати в оригінал
+      orig.value += (orig.value ? "\n" : "") + text;
+
+      // «стоп» голосом
       if (["стоп","stop","зупинись"].includes(text.toLowerCase())) { stop(); return; }
+
+      // переклад
       const translated = await translateText(text, targetSel.value);
-      tran.value  += (tran.value ? "\\n" : "") + translated;
+      tran.value  += (tran.value ? "\n" : "") + translated;
       statusEl.textContent = "✅ Додано фрагмент";
     };
   }
@@ -178,6 +210,7 @@
     startBtn.disabled = false; stopBtn.disabled = true;
   }
 
+  // ---------- Save DOCX ----------
   async function saveDocx() {
     const { Document, Packer, Paragraph, HeadingLevel } = window.docx;
     const doc = new Document({
@@ -199,12 +232,14 @@
     saveAs(blob, `voice_to_text_${ts}.docx`);
   }
 
+  // ---------- UI events ----------
   startBtn.addEventListener("click", start);
   stopBtn .addEventListener("click", stop);
   clearBtn.addEventListener("click", () => { orig.value=""; tran.value=""; });
   saveBtn .addEventListener("click", saveDocx);
   sourceSel.addEventListener("change", () => { if (recognition) recognition.lang = sourceSel.value; });
 
+  // init
   setupRecognition();
 })();
 </script>
